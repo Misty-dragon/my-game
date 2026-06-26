@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Voxel Multiplayer</title>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            touch-action: none;
+            background: black;
+        }
+
+        #joystick {
+            position: absolute;
+            width: 120px;
+            height: 120px;
+            background: rgba(255,255,255,0.1);
+            border: 2px solid white;
+            border-radius: 50%;
+            bottom: 30px;
+            left: 30px;
+        }
+
+        #stick {
+            position: absolute;
+            width: 50px;
+            height: 50px;
+            background: white;
+            border-radius: 50%;
+            left: 35px;
+            top: 35px;
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="joystick">
+    <div id="stick"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+
+<script>
+const socket = io();
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(
+    75,
+    window.innerWidth / window.innerHeight,
+    0.1,
+    1000
+);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+
+renderer.setSize(window.innerWidth, window.innerHeight);
+
+document.body.appendChild(renderer.domElement);
+
+camera.position.set(0, 10, 10);
+camera.lookAt(0, 0, 0);
+
+const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(5, 10, 5);
+scene.add(light);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+/* FLOOR */
+
+const floorGeo = new THREE.BoxGeometry(50, 1, 50);
+const floorMat = new THREE.MeshStandardMaterial({
+    color: 0x00aa00
+});
+
+const floor = new THREE.Mesh(floorGeo, floorMat);
+floor.position.y = -0.5;
+scene.add(floor);
+
+/* PLAYERS */
+
+const players = {};
+
+function createPlayer(id, data) {
+
+    const geo = new THREE.BoxGeometry(1,1,1);
+
+    const mat = new THREE.MeshStandardMaterial({
+        color: data.color
+    });
+
+    const cube = new THREE.Mesh(geo, mat);
+
+    cube.position.set(data.x, data.y, data.z);
+
+    scene.add(cube);
+
+    players[id] = cube;
+}
+
+/* SOCKET EVENTS */
+
+socket.on("currentPlayers", (serverPlayers) => {
+
+    for (let id in serverPlayers) {
+        createPlayer(id, serverPlayers[id]);
+    }
+});
+
+socket.on("newPlayer", (data) => {
+    createPlayer(data.id, data.player);
+});
+
+socket.on("playerMoved", (data) => {
+
+    if (players[data.id]) {
+        players[data.id].position.x = data.x;
+        players[data.id].position.z = data.z;
+    }
+});
+
+socket.on("playerDisconnected", (id) => {
+
+    if (players[id]) {
+        scene.remove(players[id]);
+        delete players[id];
+    }
+});
+
+/* MOBILE JOYSTICK */
+
+let moveX = 0;
+let moveY = 0;
+
+const joystick = document.getElementById("joystick");
+const stick = document.getElementById("stick");
+
+let dragging = false;
+
+joystick.addEventListener("touchstart", () => {
+    dragging = true;
+});
+
+window.addEventListener("touchend", () => {
+
+    dragging = false;
+
+    moveX = 0;
+    moveY = 0;
+
+    stick.style.left = "35px";
+    stick.style.top = "35px";
+});
+
+window.addEventListener("touchmove", (e) => {
+
+    if (!dragging) return;
+
+    const touch = e.touches[0];
+
+    const rect = joystick.getBoundingClientRect();
+
+    let x = touch.clientX - rect.left - 60;
+    let y = touch.clientY - rect.top - 60;
+
+    const dist = Math.sqrt(x*x + y*y);
+    const max = 40;
+
+    if (dist > max) {
+        x = x / dist * max;
+        y = y / dist * max;
+    }
+
+    stick.style.left = (x + 35) + "px";
+    stick.style.top = (y + 35) + "px";
+
+    moveX = x / max;
+    moveY = y / max;
+});
+
+/* GAME LOOP */
+
+function animate() {
+
+    requestAnimationFrame(animate);
+
+    const myId = socket.id;
+
+    if (players[myId]) {
+
+        players[myId].position.x += moveX * 0.1;
+        players[myId].position.z += moveY * 0.1;
+
+        camera.position.x = players[myId].position.x;
+        camera.position.z = players[myId].position.z + 10;
+
+        camera.lookAt(players[myId].position);
+
+        socket.emit("move", {
+            x: players[myId].position.x,
+            z: players[myId].position.z
+        });
+    }
+
+    renderer.render(scene, camera);
+}
+
+animate();
+
+/* RESIZE */
+
+window.addEventListener("resize", () => {
+
+    camera.aspect = window.innerWidth / window.innerHeight;
+
+    camera.updateProjectionMatrix();
+
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+
+</body>
+</html>
